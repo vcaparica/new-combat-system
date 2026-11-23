@@ -176,6 +176,7 @@ export function load(sourcePaths, options = {}) {
     dialogs: [],
     created: [],
     updates: [],
+    refused: [],
     emitted: [],
     socketHandlers: [],
     wrappers: [],
@@ -309,9 +310,15 @@ export function load(sourcePaths, options = {}) {
       content,
       flags: plain(flags) ?? {},
       async update(changes, updateOptions = {}) {
-        // Only the author and the Gamemasters may change a message: the server refuses anyone else.
-        if (message.author?.id !== game.user.id && !game.user.isGM) {
-          throw new Error(`${game.user.name} lacks permission to update ChatMessage ${message.id}`);
+        // The server refuses a message that was deleted, and anyone but its author and the Gamemasters.
+        const refusal = !game.messages.has(message.id)
+          ? `ChatMessage ${message.id} does not exist`
+          : message.author?.id !== game.user.id && !game.user.isGM
+            ? `${game.user.name} lacks permission to update ChatMessage ${message.id}`
+            : null;
+        if (refusal) {
+          recorded.refused.push({ id: message.id, changes: plain(changes), reason: refusal });
+          throw new Error(refusal);
         }
         await Promise.resolve();
         return applyUpdate(message, changes, updateOptions, game.user.id);
@@ -608,6 +615,12 @@ export function load(sourcePaths, options = {}) {
     /** A change another user's page made to a message, as it arrives on this page. */
     remoteUpdate(message, changes, userId) {
       return applyUpdate(message, changes, {}, userId);
+    },
+
+    /** A message deleted, by this page's user or another's, as every page sees it: gone, then the hook. */
+    deleteMessage(message, userId = game.user.id) {
+      game.messages.delete(message.id);
+      Hooks.callAll("deleteChatMessage", message, {}, userId);
     },
 
     /** What another page sent on a socket channel, as this page's handlers receive it. */

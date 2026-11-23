@@ -169,8 +169,10 @@
   }
 
   // Só o autor (quem atacou) e o mestre podem editar o card; por isso todas as
-  // mudanças de estado acontecem no computador de quem atacou.
-  function updateRequest(message, request, content = buildRequestContent(request)) {
+  // mudanças de estado acontecem no computador de quem atacou. Um card apagado, que não
+  // está mais em game.messages, não é tocado: não há mais o que editar.
+  async function updateRequest(message, request, content = buildRequestContent(request)) {
+    if (!game.messages.get(message.id)) return null;
     return message.update({ content, flags: { [MODULE_ID]: { defenseRequest: request } } });
   }
 
@@ -598,6 +600,15 @@
     // tem a espera correspondente; os outros ignoram.
     game.socket.on(SOCKET, (payload) => {
       receiveChoice(payload ?? {}).catch((err) => console.error("[new-combat-system] A defesa falhou:", err));
+    });
+
+    // Card apagado enquanto o ataque deste computador ainda esperava a defesa: a espera termina como um
+    // cancelamento, e nenhum dos dois fluxos tenta mais editar o card (ver updateRequest).
+    Hooks.on("deleteChatMessage", (message) => {
+      const wait = waits.get(message?.id);
+      if (!wait || wait.choice) return;
+      wait.choice = { cancelled: true };
+      wait.resolve(wait.choice);
     });
 
     // Ataques deste usuário que ficaram esperando quando a página foi recarregada não têm

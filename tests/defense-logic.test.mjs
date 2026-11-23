@@ -530,6 +530,68 @@ test("dnd5e making no roll, or the target leaving the scene, cancels the attack"
   assert.deepEqual(gone.env.notices(), []);
 });
 
+test("an attack whose card is deleted before the defense ends cancelled, touching nothing", async () => {
+  const w = world();
+  const { api } = w.env;
+  const { requestId, result } = await api.attack({ activity: w.scimitar, attacker: w.goblinToken, target: w.jerinosToken });
+  w.env.deleteMessage(w.env.game.messages.get(requestId), "victor"); // Victor clears the card from the chat
+  assert.equal(await settled(result), true, "the result settles once the card is gone");
+  assert.deepEqual(plain(await result), { status: "cancelled" });
+  assert.equal(w.env.recorded.rollAttack.length, 0);
+  assert.deepEqual(w.env.recorded.updates, []);
+  assert.deepEqual(w.env.recorded.refused, [], "no update tried on the deleted card");
+  assert.equal(await api.cancelAttack(requestId), false);
+  await assert.rejects(api.chooseDefense(requestId, "normal"), { message: "That attack is no longer waiting for a defense." });
+  assert.deepEqual(w.env.notices(), []);
+});
+
+test("a card deleted once the defense is chosen is not written to, and the attack still finishes", async () => {
+  const w = world();
+  const { api } = w.env;
+  const { requestId, result } = await api.attack({ activity: w.scimitar, attacker: w.goblinToken, target: w.jerinosToken });
+  w.env.script.rollAttack = () => {
+    w.env.deleteMessage(w.env.game.messages.get(requestId), "victor"); // while dnd5e rolls, and it rolls on
+  };
+  await api.chooseDefense(requestId, "normal");
+  assert.equal((await result).status, "done");
+  assert.deepEqual(w.env.recorded.refused, [], "the result was not written to the deleted card");
+  assert.deepEqual(w.env.recorded.updates.map((u) => u.changes.flags[MODULE].defenseRequest.status), ["chosen"]);
+});
+
+test("the player's attack whose card is deleted ends without an error", async () => {
+  const w = world({ user: "victor" });
+  const { env } = w;
+  inCombat(w);
+  env.script.dialog = () => ({ tokenId: "tok-orc", form: "normal" });
+  const rolling = w.scimitar.rollAttack();
+  await flush();
+  env.deleteMessage(env.game.messages.contents.at(-1));
+  assert.equal(await settled(rolling), true, "the held roll ends once the card is gone");
+  assert.equal(await rolling, null);
+  assert.equal(env.recorded.evaluated.length, 0, "the held d20 never rolled");
+  assert.deepEqual(env.recorded.refused, [], "no update tried on the deleted card");
+  assert.deepEqual(env.notices(), ["Goblin 2 ataca Orc: escolha a defesa no chat."]);
+  assert.deepEqual(env.recorded.console.filter((entry) => entry.level === "error"), []);
+});
+
+test("a player's card deleted just after the defense was chosen leaves the attack to roll", async () => {
+  const w = world({ user: "victor" });
+  const { env } = w;
+  inCombat(w);
+  env.script.dialog = () => ({ tokenId: "tok-orc", form: "normal" });
+  const rolling = w.scimitar.rollAttack();
+  await flush();
+  const card = env.game.messages.contents.at(-1);
+  const choosing = env.render(card).querySelectorAll(".ncs-defense-btn")[0].click();
+  env.deleteMessage(card); // the choice was taken first, so the deletion cancels nothing
+  await choosing;
+  const rolls = await rolling;
+  assert.equal(rolls?.length, 1, "the attack rolled");
+  assert.equal(env.recorded.rolls.length, 1, "the defense rolled");
+  assert.deepEqual(env.recorded.refused, [], "nothing written to the deleted card");
+  assert.deepEqual(env.notices(), ["Goblin 2 ataca Orc: escolha a defesa no chat."]);
+});
+
 test("the API gives the attack forms, their modifiers, the defenses and the defense bonus", () => {
   const w = world({ jerinosArmour: true });
   const { api } = w.env;
