@@ -1,4 +1,9 @@
-# Novo Sistema de Combate Dnd 5e (1.6)
+# Custom Combat System (1.8.0)
+
+Módulo do Foundry 14 com dnd5e 6 (regras 2014) para a campanha de Garen. Faz o ataque contra defesa, as formas de ataque e de defesa, os críticos de Garen, o som Thunderstruck e, desde a versão 1.8.0, a iniciativa de Garen e os botões de rolagem que o Dungeon Guide manda aos jogadores. Exige o módulo lib-wrapper.
+
+## As regras
+
 
 
 O combate se inicia quando um personagem declara qualquer ação que implique em uma rolagem de ataque ou de resistência. Personagens que consigam pegar seus oponentes despreparados para o combate ganham um ponto de ação de surpresa que só pode ser usado imediatamente para fazer algo antes da Iniciativa.
@@ -15,7 +20,7 @@ Ao longo da rodada, qualquer personagem que já tenha agido neste combate e aind
 
 ## Ataques e Defesas
 
-O ataque continua funcionando como sempre, mas em vez de rolar contra uma CA o atacante rola para definir a dificuldade da defesa. O personagem sendo atacado, caso possa defender-se, faz uma rolagem de defesa, 1d20 + seu Defense Bonus (DB), onde a dificuldade é a rolagem de ataque e o empate é do defensor. Seu Defense Bonus é calculado exatamente igual à sua antiga CA (CA deixa de existir), com a única diferença de que armaduras em vez de dar CA 11, 12, 13, até 18, dão +1, +2, +3, até +8, como acontece com escudos, que continuam funcionando do mesmo jeito.
+O ataque continua funcionando como sempre, mas em vez de rolar contra uma CA o atacante rola para definir a dificuldade da defesa. O personagem sendo atacado, caso possa defender-se, faz uma rolagem de defesa, 1d20 + seu Defense Bonus (DB), onde a dificuldade é a rolagem de ataque e o empate é do atacante, ou seja, empate acerta. Seu Defense Bonus é calculado exatamente igual à sua antiga CA (CA deixa de existir), com a única diferença de que armaduras em vez de dar CA 11, 12, 13, até 18, dão +1, +2, +3, até +8, como acontece com escudos, que continuam funcionando do mesmo jeito.
 
 Na prática, e é assim que o Foundry está sendo programado agora, o DB é sua antiga CA -10, e em vez de ser um valor para o atacante atingir ele agora é um bônus para atingir a rolagem do atacante.
 
@@ -71,6 +76,53 @@ Não existem mais ataques de oportunidade por deslocamento. Para fazer ataques d
 - Recarregar qualquer arma de distância.
 - Fazer um ataque desarmado sem Proficiência contra um inimigo armado.
 - Situações narrativas que o mestre considere adequadas.
+
+
+## Garen Custom Rules
+
+Até a versão 1.7.0 estas regras eram um módulo à parte, o garen-initiative, chamado Garen Custom Rules. Desde a versão 1.8.0 elas moram neste módulo, em scripts/garen-rules.js, e o garen-initiative deve ser desligado: se ele continuar ligado, este módulo não registra nada e escreve uma linha no console avisando, e o Manage Modules mostra o conflito.
+
+1. Toda rolagem de iniciativa do mundo usa o maior entre os modificadores de Destreza e Inteligência, quando a habilidade de iniciativa é Destreza. Tudo o mais que o dnd5e soma continua valendo.
+2. Na chamada de iniciativa do Dungeon Guide aparece o botão "Rolar iniciativa", com as opções Desvantagem, Normal e Vantagem.
+3. O botão só funciona para o dono do personagem ou para um Gamemaster, e só enquanto o personagem ainda não tem iniciativa.
+4. A classe do botão é "ncs-initiative-roll". Não a mude, pois a página do Dungeon Guide já a escreve.
+5. Quando o mestre pede no Dungeon Guide a rolagem de uma perícia de Garen, a do módulo Skill Point System (my-skill-system) do Caio, chega ao jogador do personagem, sussurrada a ele e aos mestres, uma mensagem com o botão "Rolar" e o nome da perícia. O clique abre o diálogo de rolagem do dnd5e, com vantagem e desvantagem, e a rolagem vai ao chat como "Perícia: " e o nome, com o bônus que a ficha mostra naquele momento, igual a rolar pela ficha. Só o dono do personagem ou um mestre pode rolar. A classe desse botão é "garen-skill-roll", e ele leva data-actor-id e data-skill; não os mude, pois a página do Dungeon Guide já os escreve.
+6. Quando o mestre aperta Enter numa linha de atributo da ficha de um personagem no Dungeon Guide, chega ao jogador do personagem, sussurrada a ele e aos mestres, a mensagem "Chaos: rolar teste de Força." com o botão "Rolar teste de Força". O clique rola o teste de atributo pelo próprio dnd5e, que abre o diálogo com vantagem, desvantagem e o modo de rolagem do jogador. Só o dono do personagem ou um mestre pode rolar, e um segundo clique com o diálogo aberto não abre outro. A classe desse botão é "garen-ability-roll", e ele leva data-actor-id e data-ability; não os mude, pois a página do Dungeon Guide já os escreve.
+
+## Dungeon Guide
+
+O Dungeon Guide, o aplicativo do mestre, usa a API do módulo, que fica em game.modules.get("new-combat-system").api. Ela só existe com o lib-wrapper ligado. Cada função confere seus argumentos e, quando recusa, lança um Error com uma frase em inglês; nenhuma mostra diálogo nem notificação.
+
+1. version: o texto "1.8.0".
+2. attackForms: as seis formas de ataque na ordem do diálogo, normal, ofensivo, defensivo, preciso, determinado e violento, cada uma com seu nome e seu título.
+3. formModifiers(form, prof): devolve os modificadores de ataque, de dano e de defesa da forma, para a proficiência dada.
+4. defenseOptions(actor): as opções de defesa do personagem, cada uma com forma, nome, custo, bônus, efeito e se está indisponível.
+5. defenseBonus(actor): o Defense Bonus do ator, a classe de armadura menos 10.
+6. responders(actor): os ids dos usuários conectados que não são mestres e são donos do ator, na ordem de game.users. Vazio quer dizer que os mestres escolhem a defesa.
+7. request(message): o pedido de defesa guardado no card, ou null.
+8. attack({activity, attacker, target, form, roll, message}): faz o ataque do módulo sem diálogo. O activity é uma atividade de ataque do dnd5e; atacante e alvo são TokenDocuments da mesma cena. Posta o card de pedido de defesa e devolve o id do card e uma promessa com o resultado. O resultado diz "done", com as rolagens de ataque e de defesa, se acertou, se foi crítico, a forma e os modificadores, ou "cancelled", quando o ataque foi cancelado, o dnd5e não rolou ou o alvo saiu da cena. A promessa é rejeitada se algo falhar.
+9. chooseDefense(messageId, form): faz o que o clique no botão de defesa do card faz, para o usuário que chama. Devolve uma promessa que vira true quando o card deixa de esperar, ou false depois de 10 segundos sem isso. Lança erro se o pedido não espera mais, se o alvo saiu da cena, se o usuário não pode escolher, se a forma é desconhecida ou indisponível, ou se o atacante não está conectado.
+10. cancelAttack(messageId): cancela um ataque pendente desta página, como o botão Cancelar do card. Devolve true se cancelou e false se o ataque não é desta página ou já não espera.
+
+## Testes
+
+Os testes não precisam do Foundry. Na pasta do módulo, rode:
+
+    node --test "tests/*.test.mjs"
+
+Com aspas, porque no Node 24 o comando node --test tests/ falha.
+
+## Lançamentos
+
+Este repositório é um fork do repositório do Caio, feito pelo Victor, e o fork é a única origem: o repositório do Caio não é um remote. Para fazer um lançamento:
+
+1. Trabalhe numa branch, como release-1.8.0, e rode os testes.
+2. Junte a branch na main do fork.
+3. Crie a tag vX.Y.Z na main e envie-a.
+4. Crie no GitHub um release de mesmo nome.
+5. Confira que o campo download do module.json aponta para o zip dessa tag, https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip.
+
+O Foundry instala e atualiza o módulo pelo campo manifest do module.json.
 
 
 ## Sons Customizados ⚡

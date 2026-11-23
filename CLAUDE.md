@@ -1,49 +1,45 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
-## Project Overview
+## What this is
 
-Foundry VTT module (JavaScript, browser-based) that adds custom combat mechanics to D&D 5e for a campaign set in "Garen." Not a Node.js project — no package.json, no build step, no test runner.
+Custom Combat System 1.8.0, a Foundry VTT 14 module for dnd5e 6 (2014 rules) used by the Garen campaign. It is plain browser JavaScript with no build step. It needs the lib-wrapper module. Player-visible texts are in Portuguese, the code comments and this file in English.
 
-**Hard dependency:** `lib-wrapper` module must be active in Foundry VTT. Both scripts check for it on init and warn via `ui.notifications` if missing.
+## The four scripts
 
-## How to Develop
+module.json loads them in this order.
 
-There is no build, lint, or test command. The module is loaded directly by Foundry VTT from `module.json`. To test changes:
+1. scripts/defense-logic.js: attack against defense. Wraps dnd5e's attack roll, posts the defense request card, the attack forms and defense forms, the defender's buttons, the socket, the hold of the attack's d20 until the defense is chosen, cancelling, and the sweep of interrupted requests. A tie is the attacker's: an attack hits when its total is equal to or higher than the defense. It also sets game.modules.get("new-combat-system").api, frozen, in the ready hook.
+2. scripts/crit-damage.js: Garen's critical damage, an even die count halved with the maximum bonus.
+3. scripts/thunderstruck.js: the Thunderstruck sound for one player's critical with one weapon.
+4. scripts/garen-rules.js: Garen Custom Rules, merged in from the old garen-initiative module. It holds the initiative rule on dnd5e.preConfigureInitiative and answers the three chat buttons. When garen-initiative is active in the world it registers nothing and logs one line; module.json also lists garen-initiative under conflicts.
 
-1. Place/symlink this directory into Foundry VTT's `Data/modules/` folder
-2. Enable "Custom Combat System" in Foundry's module management
-3. Reload the Foundry browser tab to pick up script changes
+## The API and Dungeon Guide
 
-Manual testing only — no automated tests exist.
+The API is game.modules.get("new-combat-system").api: version, attackForms, formModifiers, defenseOptions, defenseBonus, responders, request, attack, chooseDefense and cancelAttack. It is absent when lib-wrapper is off. Dungeon Guide, the GM's app, depends on it, so a change in a signature, a result shape or an error sentence is a change for that app too. The player's flow and the API use the same inner functions.
 
-## Architecture
+## Texts and classes that must not change
 
-### Entry Point & Loading
+Dungeon Guide writes these in chat messages, so do not rename or reword them: the player-visible Portuguese texts, and the button classes ncs-initiative-roll, garen-skill-roll and garen-ability-roll with their data attributes (data-combat-id and data-combatant-id, data-actor-id and data-skill, data-actor-id and data-ability).
 
-`module.json` declares which scripts Foundry loads. Currently: `scripts/defense-logic.js` and `scripts/crit-damage.js`. The skill system lives under `cleversonbraga.forge-vtt.com/modules/my-skill-system/` and is loaded as a separate Foundry module.
+## Tests
 
-### Three Independent Mechanics
+They need no Foundry: they run the scripts through node:vm with stand-ins. From the module folder run:
 
-| Script | Hook | What it does |
-|--------|------|-------------|
-| `defense-logic.js` | `renderChatMessage` + wraps `rollAttack` | Adds "Roll Defense" button to attack chat messages. Defense = 1d20 + (AC - 10). Replaces passive AC with active defense rolls. |
-| `crit-damage.js` | wraps `DamageRoll.prototype.evaluate` | Rewrites crit formula: even die counts get halved with max-roll bonus (4d6 → 2d6+12). Odd die counts unchanged. |
-| `my-skill-system/main.js` | `renderActorSheet5eCharacter` + `getRollData` | 36 custom Portuguese-named skills with point allocation based on class + INT mod. Data persisted via actor flags. |
+    node --test "tests/*.test.mjs"
 
-### Key Patterns
+The quoted glob matters, because node --test tests/ fails on Node 24. tests/stand-ins.mjs serves the defense and API tests; tests/garen-rules.test.mjs is self-contained with its own stand-ins and also checks module.json. Run them before every commit.
 
-**libWrapper registration:** All Foundry function interceptions use `libWrapper.register("new-combat-system", "CONFIG.path.to.function", wrapperFn, "WRAPPER")`. The wrapped function is always called (`await wrapped(...args)`) — modifications happen around the original.
+## The fork and releases
 
-**Chat message placeholder pattern:** Defense buttons need the message ID, but the ID doesn't exist until after `ChatMessage.create()`. So the code creates with `"PLACEHOLDER"`, then immediately calls `message.update()` to replace it with `message.id`.
+github.com/vcaparica/new-combat-system is a fork of Caio's repository and the only origin. Caio's repository is not a remote; do not add it. Never push without being asked. Commit messages are plain English in the imperative and end with a blank line and the Co-Authored-By line.
 
-**Dice formula mutation on crits:** `crit-damage.js` mutates `this._formula` via regex (`/(\d+)d(\d+)/g`), then reparses terms with `Roll.parse()`. This is necessary because Foundry's Roll object uses immutable term structures.
+To release version X.Y.Z:
 
-**Actor flag persistence:** Skill data stored via `actor.setFlag("my-skill-system", "skills")` / `actor.getFlag(...)`.
+1. Work on a branch such as release-X.Y.Z and run the tests.
+2. Set version and download in module.json, the download being https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip.
+3. Merge into main, tag vX.Y.Z on main and push the tag.
+4. Create a GitHub release of the same name.
 
-## Compatibility
-
-- Foundry VTT v10–v11
-- D&D 5e system only (`"system": ["dnd5e"]` in module.json)
-- Current version: 1.1.1
+The manifest field points at module.json on main, which is how Foundry finds updates.

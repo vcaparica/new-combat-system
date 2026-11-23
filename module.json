@@ -1,12 +1,18 @@
 {
   "id": "new-combat-system",
   "title": "Custom Combat System",
-  "description": "New combat system for Dnd 5e on Garen",
-  "version": "1.7.0",
+  "description": "Sistema de combate de Garen para o Foundry 14 com dnd5e 6 (regras 2014): ataque contra defesa, com as formas de ataque e de defesa, os críticos de Garen, o som Thunderstruck, a iniciativa de Garen e os botões de rolagem que o Dungeon Guide manda aos jogadores.",
+  "version": "1.8.0",
   "authors": [
-    { "name": "Victor Caparica" },
-    { "name": "Caio Gomes" },
-    { "name": "Leticia Mazzoncini" }
+    {
+      "name": "Victor Caparica"
+    },
+    {
+      "name": "Caio Gomes"
+    },
+    {
+      "name": "Leticia Mazzoncini"
+    }
   ],
   "compatibility": {
     "minimum": "14",
@@ -14,22 +20,44 @@
   },
   "relationships": {
     "systems": [
-      { "id": "dnd5e", "type": "system", "compatibility": { "minimum": "6.0.0", "verified": "6.0.6" } }
+      {
+        "id": "dnd5e",
+        "type": "system",
+        "compatibility": {
+          "minimum": "6.0.0",
+          "verified": "6.0.6"
+        }
+      }
     ],
     "requires": [
-      { "id": "lib-wrapper", "type": "module" }
+      {
+        "id": "lib-wrapper",
+        "type": "module"
+      }
+    ],
+    "conflicts": [
+      {
+        "id": "garen-initiative",
+        "type": "module",
+        "reason": "Merged into Custom Combat System 1.8.0"
+      }
     ]
   },
   "languages": [
-    { "lang": "en", "name": "English", "path": "lang/en.json" }
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
   ],
   "socket": true,
   "scripts": [
     "scripts/defense-logic.js",
     "scripts/crit-damage.js",
-    "scripts/thunderstruck.js"
+    "scripts/thunderstruck.js",
+    "scripts/garen-rules.js"
   ],
-  "url": "https://github.com/caiocgomes/new-combat-system",
-  "manifest": "https://raw.githubusercontent.com/caiocgomes/new-combat-system/refs/heads/main/module.json",
-  "download": "https://github.com/caiocgomes/new-combat-system/archive/refs/tags/v1.7.0.zip"
+  "url": "https://github.com/vcaparica/new-combat-system",
+  "manifest": "https://raw.githubusercontent.com/vcaparica/new-combat-system/refs/heads/main/module.json",
+  "download": "https://github.com/vcaparica/new-combat-system/archive/refs/tags/v1.8.0.zip"
 }
