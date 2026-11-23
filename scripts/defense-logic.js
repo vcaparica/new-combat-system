@@ -4,6 +4,8 @@
 (() => {
   const MODULE_ID = "new-combat-system";
   const SOCKET = `module.${MODULE_ID}`;
+  // Versão da API do módulo, game.modules.get("new-combat-system").api, que o Dungeon Guide usa.
+  const API_VERSION = "1.8.0";
   // Tempo para o computador de quem atacou confirmar que recebeu a defesa escolhida.
   const ACK_TIMEOUT_MS = 10000;
   const esc = (text) => foundry.utils.escapeHTML(String(text ?? ""));
@@ -85,12 +87,12 @@
     const ac = actor.system.attributes?.ac ?? {};
     const armored = Boolean(ac.equippedArmor || ac.equippedShield);
     const options = [
-      { form: "normal", bonus: 0, effect: rollFormula(getDefenseBonus(actor)) },
-      { form: "ceder", bonus: 1, effect: "+1, recua 1 quadrado" },
+      { form: "normal", bonus: 0, effect: rollFormula(getDefenseBonus(actor)), unavailable: false },
+      { form: "ceder", bonus: 1, effect: "+1, recua 1 quadrado", unavailable: false },
       armored
         ? { form: "esquiva", bonus: 0, effect: "indisponível com armadura ou escudo", unavailable: true }
-        : { form: "esquiva", bonus: acrobacia, effect: `${signed(acrobacia)} Acrobacia, recua 1 quadrado` },
-      { form: "total", bonus: prof, effect: `${signed(prof)} até o próximo turno` },
+        : { form: "esquiva", bonus: acrobacia, effect: `${signed(acrobacia)} Acrobacia, recua 1 quadrado`, unavailable: false },
+      { form: "total", bonus: prof, effect: `${signed(prof)} até o próximo turno`, unavailable: false },
     ];
     return options.map((option) => ({ ...option, ...DEFENSE_FORMS[option.form] }));
   }
@@ -101,10 +103,14 @@
     return game.scenes?.get(request.sceneId)?.tokens?.get(request.targetTokenId) ?? null;
   }
 
-  // Quem deve responder: os jogadores conectados donos do alvo. Sem nenhum (NPC ou
-  // jogador ausente), o mestre. O mestre vê os botões sempre, como reserva.
+  // Quem deve responder: os jogadores conectados donos do alvo, na ordem de game.users. Sem
+  // nenhum (NPC ou jogador ausente), o mestre. O mestre vê os botões sempre, como reserva.
+  function getResponders(actor) {
+    return game.users.filter((u) => u.active && !u.isGM && actor.testUserPermission(u, "OWNER"));
+  }
+
   function isExpectedResponder(actor, user = game.user) {
-    const players = game.users.filter((u) => u.active && !u.isGM && actor.testUserPermission(u, "OWNER"));
+    const players = getResponders(actor);
     if (players.length) return players.some((u) => u.id === user.id);
     return Boolean(user.isGM);
   }
@@ -139,7 +145,7 @@
     const attacker = esc(request.attackerName);
     const target = esc(request.targetName);
     const { defense } = request;
-    // Empate é do defensor, pelas regras de Garen: o ataque só acerta se superar a defesa.
+    // O veredito vem pronto em defense.hit: pelas regras de Garen, o empate é do atacante, ou seja, empate acerta.
     const verdict = defense.hit ? "✅ O ataque <strong>ACERTOU</strong>!" : "❌ O ataque <strong>ERROU</strong>!";
     let notes = "";
     if (option.form === "ceder" || option.form === "esquiva") {
@@ -179,6 +185,78 @@
     return wait;
   }
 
+  // O pedido de um ataque, como o card o guarda. Os tokens são os do canvas (fluxo do jogador) ou TokenDocuments
+  // (API), e os nomes são os dos tokens, para distinguir cinco goblins com a mesma ficha. Um token que não é do
+  // atacante não dá nome nem id: attackerTokenId fica nulo.
+  function makeRequest(activity, attackerToken, targetToken, sceneId, form, mods) {
+    const ownToken = attackerToken?.actor?.id === activity.actor.id ? attackerToken : null;
+    return {
+      attackerUserId: game.user.id,
+      attackerActorId: activity.actor.id,
+      attackerTokenId: ownToken?.id ?? null,
+      attackerName: ownToken?.name || activity.actor.name,
+      itemId: activity.item.id,
+      itemName: activity.item.name ?? null,
+      activityId: activity.id,
+      sceneId,
+      targetTokenId: targetToken.id,
+      targetName: targetToken.name || targetToken.actor.name,
+      form,
+      mods,
+      status: "pending",
+    };
+  }
+
+  // O modificador de ataque da forma entra como primeira parte da primeira rolagem configurada.
+  function withAttackModifier(config, attack) {
+    if (!attack) return config;
+    const [first = {}, ...rest] = config.rolls ?? [];
+    return { ...config, rolls: [{ ...first, parts: [String(attack), ...(first.parts ?? [])] }, ...rest] };
+  }
+
+  // Publica o card do pedido, antes de qualquer dado, e abre neste computador a espera pela defesa.
+  async function postRequest(request, speaker, options = {}) {
+    const message = await ChatMessage.create({
+      author: game.user.id,
+      speaker,
+      content: buildRequestContent(request),
+      flags: { [MODULE_ID]: { defenseRequest: request } },
+    }, options);
+    return { message, wait: createWait(message.id) };
+  }
+
+  // Cada dado de uma rolagem como [resultado, contou], para quem lê o card sem a rolagem.
+  function diceOf(roll) {
+    const dice = [];
+    for (const term of roll.dice ?? []) {
+      for (const die of term.results ?? []) dice.push([die.result, die.active !== false && die.discarded !== true]);
+    }
+    return dice;
+  }
+
+  // Rola a defesa escolhida e transforma o card no resultado. Sem o alvo na cena, não rola nada e devolve null.
+  async function rollDefense(message, request, attackRoll, choice) {
+    const defender = getDefenderToken(request)?.actor;
+    if (!defender) return null;
+    const options = getDefenseOptions(defender);
+    const option = options.find((o) => o.form === choice.form && !o.unavailable) ?? options[0];
+    const formula = rollFormula(getDefenseBonus(defender), option.bonus);
+    const defenseRoll = await new Roll(formula).evaluate();
+    // Pelas regras de Garen, o empate é do atacante, ou seja, empate acerta.
+    const hit = attackRoll.total >= defenseRoll.total;
+    const done = {
+      ...request,
+      status: "done",
+      attackTotal: attackRoll.total,
+      attackFormula: attackRoll.formula,
+      isCritical: attackRoll.isCritical === true,
+      defense: { form: option.form, name: option.name, total: defenseRoll.total, formula, hit, dice: diceOf(defenseRoll) },
+    };
+    console.log("[new-combat-system] Defesa de", request.targetName, option.form, defenseRoll.total, "contra", attackRoll.total);
+    await updateRequest(message, done, buildResultContent(done, option));
+    return { request: done, defenseRoll };
+  }
+
   // Computador de quem atacou: recebe a defesa escolhida, confere quem escolheu e marca
   // o card como "escolhida", o que serve de confirmação para quem defendeu.
   async function receiveChoice({ requestId, form, userId }) {
@@ -202,31 +280,41 @@
     }
   }
 
+  // Desiste de um ataque deste computador que ainda espera a defesa. Devolve se desistiu.
   async function cancelAttack(message) {
-    const wait = waits.get(message.id);
+    const wait = waits.get(message?.id);
     const request = getRequest(message);
-    if (!wait || wait.choice || request?.status !== "pending") return;
+    if (!wait || wait.choice || request?.status !== "pending") return false;
     wait.choice = { cancelled: true };
     try {
       await updateRequest(message, { ...request, status: "cancelled" });
     } finally {
       wait.resolve(wait.choice);
     }
+    return true;
+  }
+
+  // Leva a escolha ao computador de quem atacou: direto, quando é este; senão, pelo socket do módulo, cuja
+  // mensagem receiveChoice recebe lá. Os botões do card e a API mandam por aqui.
+  function sendChoice(requestId, request, form) {
+    const payload = { requestId, form, userId: game.user.id };
+    if (request.attackerUserId === game.user.id) {
+      receiveChoice(payload).catch((err) => console.error("[new-combat-system] A defesa falhou:", err));
+    } else {
+      game.socket.emit(SOCKET, payload);
+    }
   }
 
   // Computador de quem defende: manda a escolha e confere se ela chegou.
   function chooseDefense(message, request, form, html) {
-    const payload = { requestId: message.id, form, userId: game.user.id };
-    if (request.attackerUserId === game.user.id) {
-      receiveChoice(payload).catch((err) => console.error("[new-combat-system] A defesa falhou:", err));
-    } else {
+    if (request.attackerUserId !== game.user.id) {
       const attackerUser = game.users.get(request.attackerUserId);
       if (!attackerUser?.active) {
         ui.notifications.warn(`${attackerUser?.name ?? "Quem atacou"} está desconectado: a defesa não tem para onde ir. Refaçam o ataque.`);
         return false;
       }
-      game.socket.emit(SOCKET, payload);
     }
+    sendChoice(message.id, request, form);
     setTimeout(() => {
       const current = game.messages.get(message.id);
       if (getRequest(current)?.status !== "pending") return;
@@ -314,6 +402,122 @@
     slot.replaceChildren(...nodes);
   }
 
+  // ---------------------------------------------------------------------------
+  // API para o Dungeon Guide: game.modules.get("new-combat-system").api
+  //
+  // O fluxo do jogador sem janelas e sem avisos na tela, que funciona sem canvas e sem game.combat, como na página
+  // do app do mestre. O card, a espera, a escolha da defesa, o cancelamento e o resultado são as mesmas funções
+  // internas do fluxo do jogador. Cada função confere os argumentos e, quando recusa, lança um Error com uma frase em
+  // inglês, a língua do app.
+  // ---------------------------------------------------------------------------
+
+  function checkedActor(actor) {
+    if (!actor?.system || typeof actor.testUserPermission !== "function") throw new Error("That is not an actor.");
+    return actor;
+  }
+
+  // Ataque sem janela: confere os argumentos, publica o card do pedido como runAttack e devolve logo o id do card e a
+  // promessa do resultado, que segue sozinha quando a defesa chegar.
+  async function apiAttack({ activity, attacker, target, form = "normal", roll = {}, message = {} } = {}) {
+    if (activity?.type !== "attack" || typeof activity.rollAttack !== "function" || !activity.item || !activity.actor) {
+      throw new Error("That is not an attack activity.");
+    }
+    if (!Object.hasOwn(ATTACK_FORMS, form)) throw new Error("That is not an attack form.");
+    // Magias só têm o ataque normal, como no diálogo.
+    if (activity.item.type === "spell" && form !== "normal") throw new Error("A spell attacks only in the normal form.");
+    const sceneId = attacker?.parent?.id;
+    if (!attacker?.id || !sceneId) throw new Error("The attacker must be a token on a scene.");
+    if (!target?.id || target.parent?.id !== sceneId) throw new Error("The target must be a token on the attacker's scene.");
+    if (target.id === attacker.id) throw new Error("A token cannot attack itself.");
+    if (!target.actor) throw new Error("The target has no actor.");
+
+    const prof = Number(activity.actor.system.attributes?.prof) || 0;
+    const request = makeRequest(activity, attacker, target, sceneId, form, getFormModifiers(form, prof));
+    const speaker = ChatMessage.getSpeaker({ token: attacker, actor: activity.actor });
+    // A marca nas opções da criação cala, só na página que publicou, o aviso de pedido novo (ver createChatMessage).
+    const { message: card, wait } = await postRequest(request, speaker, { [MODULE_ID]: { api: true } });
+    const result = finishApiAttack(activity, card, request, wait, roll ?? {}, message ?? {});
+    return { requestId: card.id, result };
+  }
+
+  // O resto do ataque da API, em segundo plano: espera a defesa; rola o ataque pelo dnd5e sem janela, com a marca
+  // garenApi, que faz o wrapper de rollAttack deste módulo passar a rolagem direto ao dnd5e; rola a defesa e escreve o
+  // resultado no card. Cancelado, sem rolagem do dnd5e ou sem o alvo na cena, termina "cancelled"; um erro deixa o
+  // card cancelado e rejeita.
+  async function finishApiAttack(activity, card, request, wait, roll, messageConfig) {
+    const choice = await wait.promise;
+    waits.delete(card.id);
+    if (choice.cancelled) return { status: "cancelled" };
+    const cancel = () => updateRequest(card, { ...request, status: "cancelled" });
+    try {
+      const config = withAttackModifier({ ...roll, garenApi: true }, request.mods.attack);
+      const attackRolls = await activity.rollAttack(config, { configure: false }, messageConfig);
+      const attackRoll = Array.isArray(attackRolls) ? attackRolls[0] : attackRolls;
+      const finished = attackRoll ? await rollDefense(card, request, attackRoll, choice) : null;
+      if (!finished) {
+        await cancel();
+        return { status: "cancelled" };
+      }
+      const { defense, isCritical } = finished.request;
+      return {
+        status: "done",
+        attackRoll,
+        defenseRoll: finished.defenseRoll,
+        hit: defense.hit,
+        isCritical,
+        form: request.form,
+        mods: request.mods,
+        defense,
+      };
+    } catch (err) {
+      await cancel().catch(() => {});
+      throw err;
+    }
+  }
+
+  // A escolha de um botão de defesa do card, para quem chama a API, com as mesmas condições e uma frase para cada
+  // recusa. acknowledged diz se o computador de quem atacou recebeu a escolha.
+  async function apiChooseDefense(messageId, form) {
+    const message = game.messages.get(messageId);
+    const request = getRequest(message);
+    if (request?.status !== "pending") throw new Error("That attack is no longer waiting for a defense.");
+    const defender = getDefenderToken(request)?.actor;
+    if (!defender) throw new Error(`${request.targetName} is no longer on the scene.`);
+    if (!defender.testUserPermission(game.user, "OWNER")) {
+      throw new Error("Only the defender's owner or a Gamemaster can choose this defense.");
+    }
+    const option = getDefenseOptions(defender).find((o) => o.form === form);
+    if (!option) throw new Error("That is not a defense.");
+    if (option.unavailable) throw new Error(`${option.name} needs no armour and no shield.`);
+    if (request.attackerUserId !== game.user.id) {
+      const attackerUser = game.users.get(request.attackerUserId);
+      if (!attackerUser?.active) {
+        throw new Error(`${attackerUser?.name ?? "The attacker"} is not connected, so the defense has nowhere to go.`);
+      }
+    }
+    const acknowledged = acknowledgement(message.id);
+    sendChoice(message.id, request, form);
+    return { acknowledged };
+  }
+
+  // true assim que o card deixa "pending"; false se ele ainda espera quando acaba o prazo de ACK_TIMEOUT_MS, porque a
+  // página de quem atacou pode ter sido recarregada.
+  function acknowledgement(messageId) {
+    return new Promise((resolve) => {
+      let hook = null;
+      let timer = null;
+      const settle = (value) => {
+        Hooks.off("updateChatMessage", hook);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      hook = Hooks.on("updateChatMessage", (message) => {
+        if (message.id === messageId && getRequest(message)?.status !== "pending") settle(true);
+      });
+      timer = setTimeout(() => settle(getRequest(game.messages.get(messageId))?.status !== "pending"), ACK_TIMEOUT_MS);
+    });
+  }
+
   Hooks.once("init", () => {
     game.settings.register(MODULE_ID, "filterByRange", {
       name: "Filter targets by weapon range",
@@ -357,9 +561,11 @@
     });
 
     // Pedido novo: avisa na tela quem deve responder.
-    Hooks.on("createChatMessage", (message) => {
+    Hooks.on("createChatMessage", (message, options, userId) => {
       const request = getRequest(message);
       if (request?.status !== "pending") return;
+      // O card que a API publicou não avisa a página que o publicou: a API não mostra avisos.
+      if (options?.[MODULE_ID]?.api && userId === game.user.id) return;
       const defender = getDefenderToken(request)?.actor;
       if (defender && isExpectedResponder(defender)) {
         ui.notifications.info(`${request.attackerName} ataca ${request.targetName}: escolha a defesa no chat.`);
@@ -577,40 +783,11 @@
 
       // Modificador de ataque da forma entra na primeira rolagem configurada. args[0]
       // pode chegar indefinido (clique na ficha) ou com { event } (botão do card).
-      if (mods.attack) {
-        const config = args[0] ?? {};
-        const [first = {}, ...rest] = config.rolls ?? [];
-        args[0] = {
-          ...config,
-          rolls: [{ ...first, parts: [String(mods.attack), ...(first.parts ?? [])] }, ...rest],
-        };
-      }
+      if (mods.attack) args[0] = withAttackModifier(args[0] ?? {}, mods.attack);
 
-      // Pedido de defesa, publicado antes de qualquer dado. Nomes de token, para
-      // distinguir cinco goblins com a mesma ficha.
-      const attackerName = attackerToken?.actor?.id === this.actor.id && attackerToken.name
-        ? attackerToken.name
-        : this.actor.name;
-      let request = {
-        attackerUserId: game.user.id,
-        attackerActorId: this.actor.id,
-        attackerName,
-        itemId: this.item.id,
-        activityId: this.id,
-        sceneId: canvas.scene?.id,
-        targetTokenId: selectedTokenId,
-        targetName: targetToken.name || targetToken.actor.name,
-        form,
-        mods,
-        status: "pending",
-      };
-      const message = await ChatMessage.create({
-        author: game.user.id,
-        speaker: ChatMessage.getSpeaker({ actor: this.actor }),
-        content: buildRequestContent(request),
-        flags: { [MODULE_ID]: { defenseRequest: request } },
-      });
-      const wait = createWait(message.id);
+      // Pedido de defesa, publicado antes de qualquer dado.
+      const request = makeRequest(this, attackerToken, targetToken, canvas.scene?.id, form, mods);
+      const { message, wait } = await postRequest(request, ChatMessage.getSpeaker({ actor: this.actor }));
 
       // O dnd5e mostra a janela de rolagem normalmente; o wrapper de buildEvaluate segura
       // a avaliação do d20 até a defesa ser escolhida (ver o registro abaixo).
@@ -645,27 +822,10 @@
       waits.delete(message.id);
       if (defenseChoice.cancelled) return attackRolls;
 
-      const defender = getDefenderToken(request)?.actor;
-      if (!defender) {
+      if (!(await rollDefense(message, request, attackRoll, defenseChoice))) {
         ui.notifications.warn("Alvo não encontrado na cena: a defesa não foi rolada.");
         await updateRequest(message, { ...request, status: "cancelled" });
-        return attackRolls;
       }
-      const options = getDefenseOptions(defender);
-      const option = options.find((o) => o.form === defenseChoice.form && !o.unavailable) ?? options[0];
-      const formula = rollFormula(getDefenseBonus(defender), option.bonus);
-      const defenseRoll = await new Roll(formula).evaluate();
-      request = {
-        ...request,
-        status: "done",
-        attackTotal: attackRoll.total,
-        attackFormula: attackRoll.formula,
-        isCritical: attackRoll.isCritical === true,
-        defense: { form: option.form, total: defenseRoll.total, formula, hit: attackRoll.total > defenseRoll.total },
-      };
-      console.log("[new-combat-system] Defesa de", request.targetName, option.form, defenseRoll.total, "contra", attackRoll.total);
-      await updateRequest(message, request, buildResultContent(request, option));
-
       return attackRolls;
     }
 
@@ -676,6 +836,9 @@
       MODULE_ID,
       "CONFIG.DND5E.activityTypes.attack.documentClass.prototype.rollAttack",
       async function (wrapped, ...args) {
+        // A rolagem da API (config.garenApi) vai direto ao dnd5e: a API já publicou o card e esperou a defesa, e
+        // trata ela mesma os erros, sem avisos na tela.
+        if (args[0]?.garenApi === true) return wrapped(...args);
         try {
           return await runAttack.call(this, wrapped, args);
         } catch (err) {
@@ -706,5 +869,27 @@
       },
       "MIXED"
     );
+
+    // A API do Dungeon Guide, depois dos wrappers, de que o ataque dela depende.
+    const ncsModule = game.modules.get(MODULE_ID);
+    if (ncsModule) {
+      ncsModule.api = Object.freeze({
+        version: API_VERSION,
+        attackForms: Object.freeze(
+          Object.entries(ATTACK_FORMS).map(([key, { name, title }]) => Object.freeze({ key, name, title }))
+        ),
+        formModifiers(form, prof) {
+          if (!Object.hasOwn(ATTACK_FORMS, form)) throw new Error("That is not an attack form.");
+          return getFormModifiers(form, Number(prof) || 0);
+        },
+        defenseOptions: (actor) => getDefenseOptions(checkedActor(actor)),
+        defenseBonus: (actor) => getDefenseBonus(checkedActor(actor)),
+        responders: (actor) => getResponders(checkedActor(actor)).map((u) => u.id),
+        request: (message) => getRequest(message),
+        attack: apiAttack,
+        chooseDefense: apiChooseDefense,
+        cancelAttack: async (messageId) => cancelAttack(game.messages.get(messageId)),
+      });
+    }
   });
 })();
