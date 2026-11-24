@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## What this is
 
-Custom Combat System 1.8.0, a Foundry VTT 14 module for dnd5e 6 (2014 rules) used by the Garen campaign. It is plain browser JavaScript with no build step. It needs the lib-wrapper module. Player-visible texts are in Portuguese, the code comments and this file in English.
+Custom Combat System 1.8.0, a Foundry VTT 14 module for dnd5e 6 (2014 rules) used by the Garen campaign. It is plain browser JavaScript with no build step. It needs the lib-wrapper module. Player-visible texts are in Portuguese and this file is in English. The code comments in the four scripts are almost all in Portuguese, as Caio wrote them; a file keeps its language when comments are added to it.
 
 ## The four scripts
 
@@ -21,7 +21,7 @@ The API is game.modules.get("new-combat-system").api: version, attackForms, form
 
 ## Texts and classes that must not change
 
-Dungeon Guide writes these in chat messages, so do not rename or reword them: the player-visible Portuguese texts, and the button classes ncs-initiative-roll, garen-skill-roll and garen-ability-roll with their data attributes (data-combat-id and data-combatant-id, data-actor-id and data-skill, data-actor-id and data-ability).
+Do not rename or reword the player-visible Portuguese texts. Dungeon Guide keeps copies of the defense names and the form titles (in its dungeon_guide/play/sentences.py) and reads them from the API, and it writes in chat messages only the three button classes with their data attributes: ncs-initiative-roll with data-combat-id and data-combatant-id, garen-skill-roll with data-actor-id and data-skill, and garen-ability-roll with data-actor-id and data-ability. Renaming any of these breaks Dungeon Guide.
 
 ## Tests
 
@@ -37,9 +37,12 @@ github.com/vcaparica/new-combat-system is a fork of Caio's repository and the on
 
 To release version X.Y.Z:
 
-1. Work on a branch such as release-X.Y.Z and run the tests.
-2. Set version and download in module.json, the download being https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip.
-3. Merge into main, tag vX.Y.Z on main and push the tag.
-4. Create a GitHub release of the same name.
+1. Work on a branch such as release-X.Y.Z. Set the new version in module.json, in the tag of its download URL (https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip) and in API_VERSION in scripts/defense-logic.js, a second copy of the version that a later bump could miss.
+2. Run the tests and commit.
+3. Merge into main.
+4. Tag vX.Y.Z.
+5. Push main and the tag. The manifest URL serves main's module.json, so pushing only the tag leaves Foundry blind to the release.
+6. Create a GitHub release of the same name.
+7. Check that the manifest URL answers the new version and the download URL answers a zip.
 
-The manifest field points at module.json on main, which is how Foundry finds updates.
+The manifest field points at module.json on main, which is how Foundry finds updates. .gitattributes keeps tests/, CLAUDE.md and .gitignore out of the archive, so the zip carries only module.json, README.md, lang/, scripts/ and sounds/.

@@ -99,9 +99,9 @@ O Dungeon Guide, o aplicativo do mestre, usa a API do módulo, que fica em game.
 4. defenseOptions(actor): as opções de defesa do personagem, cada uma com forma, nome, custo, bônus, efeito e se está indisponível.
 5. defenseBonus(actor): o Defense Bonus do ator, a classe de armadura menos 10.
 6. responders(actor): os ids dos usuários conectados que não são mestres e são donos do ator, na ordem de game.users. Vazio quer dizer que os mestres escolhem a defesa.
-7. request(message): o pedido de defesa guardado no card, ou null.
-8. attack({activity, attacker, target, form, roll, message}): faz o ataque do módulo sem diálogo. O activity é uma atividade de ataque do dnd5e; atacante e alvo são TokenDocuments da mesma cena. Posta o card de pedido de defesa e devolve o id do card e uma promessa com o resultado. O resultado diz "done", com as rolagens de ataque e de defesa, se acertou, se foi crítico, a forma e os modificadores, ou "cancelled", quando o ataque foi cancelado, o dnd5e não rolou ou o alvo saiu da cena. A promessa é rejeitada se algo falhar.
-9. chooseDefense(messageId, form): faz o que o clique no botão de defesa do card faz, para o usuário que chama. Devolve uma promessa que vira true quando o card deixa de esperar, ou false depois de 10 segundos sem isso. Lança erro se o pedido não espera mais, se o alvo saiu da cena, se o usuário não pode escolher, se a forma é desconhecida ou indisponível, ou se o atacante não está conectado.
+7. request(message): uma cópia do pedido de defesa guardado no card, ou null; mudar a cópia não muda o card.
+8. attack({activity, attacker, target, form, roll, message}): faz o ataque do módulo sem diálogo. O activity é uma atividade de ataque do dnd5e; atacante e alvo são TokenDocuments da mesma cena. Posta o card de pedido de defesa e devolve o id do card e uma promessa com o resultado. O resultado diz "done", com as rolagens de ataque e de defesa, se acertou, se foi crítico, a forma, os modificadores e o objeto defense, com form, name, total, formula, hit e dice, ou "cancelled", quando o ataque foi cancelado, o card foi apagado enquanto esperava, o dnd5e não rolou ou o alvo saiu da cena. A promessa é rejeitada se algo falhar.
+9. chooseDefense(messageId, form): faz o que o clique no botão de defesa do card faz, para o usuário que chama. Devolve uma promessa que vira um objeto {acknowledged}, em que acknowledged é por sua vez uma promessa: true quando o card deixa de esperar, ou false depois de 10 segundos sem isso. Lança erro se o pedido não espera mais, se o alvo saiu da cena, se o usuário não pode escolher, se a forma é desconhecida ou indisponível, ou se o atacante não está conectado.
 10. cancelAttack(messageId): cancela um ataque pendente desta página, como o botão Cancelar do card. Devolve true se cancelou e false se o ataque não é desta página ou já não espera.
 
 ## Testes
@@ -114,15 +114,17 @@ Com aspas, porque no Node 24 o comando node --test tests/ falha.
 
 ## Lançamentos
 
-Este repositório é um fork do repositório do Caio, feito pelo Victor, e o fork é a única origem: o repositório do Caio não é um remote. Para fazer um lançamento:
+Este repositório é um fork do repositório do Caio, feito pelo Victor, e o fork é a única origem: o repositório do Caio não é um remote. Para fazer um lançamento de X.Y.Z:
 
-1. Trabalhe numa branch, como release-1.8.0, e rode os testes.
-2. Junte a branch na main do fork.
-3. Crie a tag vX.Y.Z na main e envie-a.
-4. Crie no GitHub um release de mesmo nome.
-5. Confira que o campo download do module.json aponta para o zip dessa tag, https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip.
+1. Trabalhe numa branch, como release-X.Y.Z. Ponha a versão nova no module.json, na tag do endereço do campo download (https://github.com/vcaparica/new-combat-system/archive/refs/tags/vX.Y.Z.zip) e em API_VERSION, em scripts/defense-logic.js, uma segunda cópia da versão que um aumento futuro pode esquecer.
+2. Rode os testes e faça o commit.
+3. Junte a branch na main.
+4. Crie a tag vX.Y.Z.
+5. Envie a main e a tag. O campo manifest aponta para o module.json da main, então enviar só a tag deixa o Foundry sem ver o lançamento.
+6. Crie no GitHub um release de mesmo nome.
+7. Confira que o endereço do manifest responde a versão nova e que o endereço do download responde um zip.
 
-O Foundry instala e atualiza o módulo pelo campo manifest do module.json.
+O Foundry instala e atualiza o módulo pelo campo manifest do module.json. O arquivo .gitattributes tira do zip o que o Foundry não precisa (tests, CLAUDE.md, .gitignore), de modo que ele leva só module.json, README.md, lang, scripts e sounds.
 
 
 ## Sons Customizados ⚡
