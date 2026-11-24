@@ -138,6 +138,19 @@ test("a tie is a hit in the player's flow too", async () => {
   assert.ok(card.content.includes("O ataque <strong>ACERTOU</strong>!"), card.content);
 });
 
+test("api.request hands out a copy, so changing it leaves the card's request alone", async () => {
+  const w = world();
+  const { api } = w.env;
+  const { requestId } = await api.attack({ activity: w.scimitar, attacker: w.goblinToken, target: w.jerinosToken });
+  const card = w.env.game.messages.get(requestId);
+  const first = api.request(card);
+  const before = plain(first);
+  first.status = "tampered";
+  first.mods.attack = 99;
+  assert.deepEqual(plain(api.request(card)), before);
+  assert.deepEqual(plain(requestOf(card)), before);
+});
+
 test("attack posts the request card with the new fields", async () => {
   const w = world();
   const { api } = w.env;

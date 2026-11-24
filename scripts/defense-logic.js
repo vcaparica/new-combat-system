@@ -896,7 +896,11 @@
         defenseOptions: (actor) => getDefenseOptions(checkedActor(actor)),
         defenseBonus: (actor) => getDefenseBonus(checkedActor(actor)),
         responders: (actor) => getResponders(checkedActor(actor)).map((u) => u.id),
-        request: (message) => getRequest(message),
+        // Uma cópia: o pedido guardado no card é o dado vivo desta página, e quem o muda mudaria o card.
+        request: (message) => {
+          const request = getRequest(message);
+          return request ? foundry.utils.deepClone(request) : null;
+        },
         attack: apiAttack,
         chooseDefense: apiChooseDefense,
         cancelAttack: async (messageId) => cancelAttack(game.messages.get(messageId)),

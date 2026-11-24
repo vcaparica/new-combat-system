@@ -463,7 +463,7 @@ export function load(sourcePaths, options = {}) {
       Dice: { D20Roll },
     },
     foundry: {
-      utils: { escapeHTML },
+      utils: { escapeHTML, deepClone: (value) => structuredClone(value) },
       applications: {
         api: {
           DialogV2: {
