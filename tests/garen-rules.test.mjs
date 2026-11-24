@@ -511,6 +511,39 @@ test("the guard: with garen-initiative present but inactive, init registers the 
   assert.ok(hooks.on.length >= 2);
 });
 
+// Foundry loads every module's plain scripts as script tags in one shared global scope. The old garen-initiative
+// module's initiative.js declared these same top-level names, so garen-rules.js must not declare any at the top level.
+const oldModuleStandIn = `
+function garenInitiative() {}
+const rollsInFlight = new Set();
+function findCombatant() {}
+async function rollInitiativeFromButton() {}
+const skillRollsInFlight = new Set();
+async function rollSkillFromButton() {}
+const abilityRollsInFlight = new Set();
+async function rollAbilityFromButton() {}
+`;
+
+for (const order of [["old", "new"], ["new", "old"]]) {
+  test(`shared global scope: garen-rules.js loads ${order.join(" then ")} next to the old module's script without a clash`, () => {
+    const hooks = [];
+    const logs = [];
+    const context = {
+      Hooks: { on: (name) => hooks.push(name), once: (name, fn) => name === "init" && inits.push(fn) },
+      CONFIG: { DND5E: { defaultAbilities: { initiative: "dex" } } },
+      console: { log: (...a) => logs.push(a.join(" ")), error: () => {}, warn: () => {} },
+      game: { modules: { get: (id) => (id === "garen-initiative" ? { active: true } : undefined) } },
+    };
+    const inits = [];
+    vm.createContext(context);
+    for (const which of order) vm.runInContext(which === "old" ? oldModuleStandIn : source, context);
+    for (const fn of inits) fn();
+    assert.equal(hooks.length, 0);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /garen-initiative/);
+  });
+}
+
 test("module.json: version, scripts, socket, relationships, links", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(here, "..", "module.json"), "utf8"));
   assert.equal(manifest.version, "1.8.0");
